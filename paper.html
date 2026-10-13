@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e3fc0">
+<title>Paper Bot</title>
+<style>
+:root{--blue:#1e3fc0;--bg:#eceefa;--ink:#0f1630;--mut:#6b7490;--line:#e8eaf5;--up:#12b76a;--dn:#e5252a}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink)}
+#app{max-width:480px;margin:0 auto;min-height:100vh}
+.hero{background:var(--blue);color:#fff;border-radius:0 0 30px 30px;padding:calc(env(safe-area-inset-top,0px) + 16px) 16px 70px;text-align:center}
+.hero h1{font-size:17px;margin:0 0 4px}
+.hero small{display:block;font-size:11px;letter-spacing:.08em;opacity:.8;margin-top:16px}
+.hero .big{font-size:42px;font-weight:800;line-height:1.15}
+.hero .sub{font-size:12px;opacity:.85;min-height:16px}
+.sheet{margin:-48px 12px 24px;background:#fff;border-radius:22px;box-shadow:0 6px 24px rgba(30,63,192,.12);overflow:hidden}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:14px 12px}
+.k{background:#f1f2fb;border-radius:14px;padding:10px 4px;text-align:center}
+.k b{display:block;font-size:16px}.k span{font-size:10.5px;color:var(--mut)}
+h2{font-size:13px;margin:6px 16px;color:var(--mut);font-weight:600}
+.row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--line)}
+.mid{flex:1;min-width:0}.mid b{display:block;font-size:14px}.mid span{font-size:11.5px;color:var(--mut)}
+.right{text-align:right}.right b{display:block;font-size:14px}
+.up{color:var(--up)}.dn{color:var(--dn)}
+.chip{font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;background:#eef0fb;color:var(--blue)}
+.chip.buy{background:#e3f8ee;color:var(--up)}.chip.sell{background:#fde8e8;color:var(--dn)}.chip.open{background:#fff3cc;color:#a77b00}
+.empty{padding:26px 18px;text-align:center;color:var(--mut);font-size:13px}
+.note{padding:12px 16px 16px;font-size:11px;color:var(--mut);border-top:1px solid var(--line)}
+a.link{display:block;text-align:center;font-size:12px;color:var(--blue);padding:0 0 18px;text-decoration:none}
+</style></head>
+<body><div id="app">
+<div class="hero"><h1>Paper Bot</h1>
+<small>NET RESULT (SIMULATED $)</small><div class="big" id="net">-</div><div class="sub" id="sub">Loading...</div></div>
+<div class="sheet">
+<div class="grid">
+ <div class="k"><b id="n">-</b><span>Closed</span></div>
+ <div class="k"><b id="wr">-</b><span>Win rate</span></div>
+ <div class="k"><b id="pf">-</b><span>Profit factor</span></div>
+ <div class="k"><b id="op">-</b><span>Open</span></div>
+</div>
+<h2>By symbol</h2><div id="sym"></div>
+<h2 style="margin-top:12px">Latest trades</h2><div id="list"></div>
+<div class="note">Simulated on Twelve Data candles, nothing is placed with a broker. With SL $2 / TP $4 the break-even win rate is 33.3% before spread, so judge it only after 50+ closed trades. Data can lag up to ~5 min.</div>
+</div>
+<a class="link" href="./">Back to screener</a>
+</div>
+<script>
+const URL_ = "https://raw.githubusercontent.com/pratikmane/Screener/main/paper/state.json";
+const $=s=>document.querySelector(s);
+const f2=x=>(x>=0?"+":"")+x.toFixed(2);
+const stats=ts=>{const c=ts.filter(t=>t.status!=="OPEN");const w=c.filter(t=>t.status==="TP").length,l=c.length-w;
+  const net=w*4-l*2;return{n:c.length,w,l,net,wr:c.length?100*w/c.length:null,pf:l?(w*4)/(l*2):null}};
+(async()=>{
+  let st;
+  try{ const r=await fetch(URL_+"?t="+Date.now()); if(!r.ok) throw 0; st=await r.json(); }
+  catch(e){ $("#sub").textContent="No data yet. Run the paper-bot workflow."; $("#net").textContent="-"; $("#list").innerHTML='<div class="empty">Nothing recorded yet.</div>'; return; }
+  const T=st.trades||[], s=stats(T);
+  $("#net").textContent=f2(s.net)+"$"; $("#net").className="big";
+  $("#sub").textContent=T.length?`${T.length} trades recorded`:"No trades yet";
+  $("#n").textContent=s.n; $("#wr").textContent=s.wr==null?"-":s.wr.toFixed(0)+"%";
+  $("#pf").textContent=s.pf==null?"-":s.pf.toFixed(2); $("#op").textContent=T.filter(t=>t.status==="OPEN").length;
+  const syms=[...new Set(T.map(t=>t.symbol))];
+  $("#sym").innerHTML=syms.length?syms.map(y=>{const q=stats(T.filter(t=>t.symbol===y));
+    return `<div class="row"><div class="mid"><b>${y}</b><span>${q.n} closed · ${q.wr==null?"-":q.wr.toFixed(0)+"% wins"}</span></div><div class="right"><b class="${q.net>=0?"up":"dn"}">${f2(q.net)}$</b></div></div>`}).join(""):'<div class="empty">-</div>';
+  $("#list").innerHTML=T.length?T.slice(-30).reverse().map(t=>{
+    const res=t.status==="OPEN"?'<span class="chip open">OPEN</span>':`<b class="${t.pnl>=0?"up":"dn"}">${f2(t.pnl)}$</b>`;
+    return `<div class="row"><div class="mid"><b>${t.symbol} <span class="chip ${t.side.toLowerCase()}">${t.side}</span></b><span>${t.open_time.slice(5,16)} UTC · @ ${t.entry}</span></div><div class="right">${res}<span style="font-size:11px;color:var(--mut)">${t.status==="OPEN"?"":t.status}</span></div></div>`}).join(""):'<div class="empty">Waiting for the first signal.</div>';
+})();
+</script></body></html>
