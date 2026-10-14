@@ -134,7 +134,7 @@ function onBar(i, d, x, ctx) {
   // or use rr instead of tp:
   // { side:'sell', sl: 123.4, rr: 2 }
 }</pre>
-      <p><code>d</code> has arrays <code>open high low close time hour day</code>. Only read index <code>i</code> or earlier, never <code>i+1</code>, or the result is fake. The one allowed peek is <code>ctx.entry(side)</code>, the real entry price (next open plus spread).</p>
+      <p><code>d</code> has arrays <code>open high low close volume time hour day</code>. Only read index <code>i</code> or earlier, never <code>i+1</code>, or the result is fake. The one allowed peek is <code>ctx.entry(side)</code>, the real entry price (next open plus spread).</p>
       <p><code>ctx.skip('reason')</code> counts why a signal was skipped. <code>ctx.p</code> holds the current parameter set.</p>
       <p><b>Sweep:</b> add <code>const params = { n:[20,55], rr:[2,3] };</code> and read <code>p.n</code>, <code>p.rr</code> in your functions. The tool runs every combination (max 40) and shows a table.</p>
       <p><b>Helpers (<code>ind</code>):</b> sma, ema, rsi, atr(d,n,'sma'|'wilder'), adx, stdev, bbands, highest, lowest, swings(d,n), nearestSwing(...). See the templates for examples.</p>
@@ -164,6 +164,13 @@ function onBar(i, d, x, ctx) {
       <div class="fld"><label>Contract size</label><input type="number" id="contract" step="any" inputmode="decimal"></div>
       <div class="fld"><label>Profit currency</label><select id="quoteUSD"><option value="1">USD (e.g. XAUUSD, EURUSD)</option><option value="0">Not USD (e.g. USDJPY)</option></select></div>
     </div>
+
+    <h3>Position size</h3>
+    <div class="grid2">
+      <div class="fld"><label>Starting balance ($)</label><input type="number" id="balance" inputmode="decimal"></div>
+      <div class="fld"><label>Risk per trade (% of balance, 0 = fixed lot)</label><input type="number" id="riskPct" step="0.1" inputmode="decimal"></div>
+    </div>
+    <div class="hint">With a risk %, the lot size is worked out for every trade from the stop distance and the current balance. A strategy can also set this itself with <code>config.riskPct</code> and <code>config.balance</code>.</div>
 
     <h3>Risk limits</h3>
     <div class="grid2">
@@ -268,6 +275,141 @@ function onBar(i, d, x, ctx) {
   return { side, sl, tp };
 }
 `},
+cross20100: {name:'EMA 20/100 cross, 3R (your circled row)', code:`// ===== EMA 20/100 cross with a 3R target (the row you circled) =====
+// Entry: fast EMA crosses the slow EMA.  SL: 1.5 x ATR(14) from the close.  TP: 3 x risk.
+// NOTE: the SL rule is the one from the Starter template. If your sweep used another
+// stop rule, the numbers will differ a little.
+
+const FAST = 20, SLOW = 100, RR = 3, SL_ATR = 1.5;
+
+// Robustness check (is it a real pattern or a lucky spot?): remove the // below
+// to test the neighbours too. A real edge looks similar around the chosen numbers.
+// const params = { fast: [15, 20, 25], slow: [80, 100, 120], rr: [3] };
+
+const config = { warmup: 120 };
+
+function prepare(d, ind, p) {
+  const f = p.fast || FAST, sl = p.slow || SLOW;
+  return { fast: ind.ema(d.close, f), slow: ind.ema(d.close, sl), atr: ind.atr(d, 14) };
+}
+
+function onBar(i, d, x, ctx) {
+  const rr = ctx.p.rr || RR;
+  const a = x.atr[i];
+  if (!(a > 0)) return null;
+  const up   = x.fast[i] > x.slow[i] && x.fast[i-1] <= x.slow[i-1];
+  const down = x.fast[i] < x.slow[i] && x.fast[i-1] >= x.slow[i-1];
+  if (up)   return { side: 'buy',  sl: d.close[i] - SL_ATR * a, rr: rr };
+  if (down) return { side: 'sell', sl: d.close[i] + SL_ATR * a, rr: rr };
+  return null;
+}
+`},
+ema9cross: {name:'9 EMA cross-back, 0.5% risk', code:`// ===== 9 EMA cross-back strategy =====
+// BUY : previous candle closed at or below the 9 EMA, and the current candle
+//       is bullish and closes above it.
+// SELL: previous candle closed at or above the 9 EMA, and the current candle
+//       is bearish and closes below it.
+// SL  : previous candle's low (buy) / high (sell).
+// TP  : 2 x the risk distance.
+// Limits: max 10 trades per day, risk 0.5% of the account balance per trade.
+
+const config = {
+  warmup: 60,
+  maxTradesDay: 10,
+  riskPct: 0.5,       // % of balance risked per trade
+  balance: 10000,     // starting balance for the test: change it to yours
+  dailyLoss: 0,       // 0 = no daily loss limit (not part of your rules)
+  maxRisk: 0
+};
+
+function prepare(d, ind, p) {
+  return { e9: ind.ema(d.close, 9) };
+}
+
+function onBar(i, d, x, ctx) {
+  const e = x.e9, c = d.close, o = d.open;
+
+  if (c[i-1] <= e[i-1] && c[i] > o[i] && c[i] > e[i])
+    return { side: 'buy', sl: d.low[i-1], rr: 2 };
+
+  if (c[i-1] >= e[i-1] && c[i] < o[i] && c[i] < e[i])
+    return { side: 'sell', sl: d.high[i-1], rr: 2 };
+
+  return null;
+}
+`},
+crosssweep: {name:'EMA cross sweep (8 combinations)', code:`// ===== EMA cross sweep: 8 combinations =====
+// Entry: fast EMA crosses slow EMA. SL: 1.5 x ATR(14) from the close. TP: rr x risk.
+const params = { fastPeriod: [10, 20], slowPeriod: [50, 100], rr: [2, 3] };
+
+const config = { warmup: 60 };
+
+function prepare(d, ind, p) {
+  return {
+    fast: ind.ema(d.close, p.fastPeriod),
+    slow: ind.ema(d.close, p.slowPeriod),
+    atr:  ind.atr(d, 14)
+  };
+}
+
+function onBar(i, d, x, ctx) {
+  const a = x.atr[i];
+  if (!(a > 0)) return null;
+  const up   = x.fast[i] > x.slow[i] && x.fast[i-1] <= x.slow[i-1];
+  const down = x.fast[i] < x.slow[i] && x.fast[i-1] >= x.slow[i-1];
+  if (up)   return { side: 'buy',  sl: d.close[i] - 1.5 * a, rr: ctx.p.rr };
+  if (down) return { side: 'sell', sl: d.close[i] + 1.5 * a, rr: ctx.p.rr };
+  return null;
+}
+`},
+crossfilter8: {name:'EMA cross 8 combos + sideways + volume filter', code:`// ===== EMA cross, 8 combinations + sideways filter + volume filter =====
+// Same strategy as before: fast EMA crosses slow EMA. SL = 1.5 x ATR(14). TP = rr x risk.
+//
+// NEW FILTERS (the "filters" parameter: 0 = off, 1 = on):
+//  1) SIDEWAYS: if ADX(14) is below ADX_MIN the market is sideways -> NO trade.
+//  2) VOLUME  : trade only if the signal candle's volume is at least VOL_MULT x
+//               the average of the previous VOL_N candles (and above zero).
+//               Spot gold/forex data often has no real volume. Then the tool
+//               uses the candle's range as a volume proxy and tells you so.
+//
+// Rows come in pairs: filters=0 is the original strategy, filters=1 has both
+// filters. Compare each pair to see what the filters really do.
+
+const ADX_MIN = 20;                 // below this = sideways
+const VOL_N = 20, VOL_MULT = 1.0;   // 1.0 = above average volume, 0 = any volume
+
+const params = { fastPeriod: [10, 20], slowPeriod: [50, 100], rr: [2, 3], filters: [0, 1] };
+
+const config = { warmup: 60 };
+
+function prepare(d, ind, p) {
+  return {
+    fast: ind.ema(d.close, p.fastPeriod),
+    slow: ind.ema(d.close, p.slowPeriod),
+    atr:  ind.atr(d, 14),
+    adx:  ind.adx(d, 14),
+    volAvg: ind.sma(d.volume, VOL_N)
+  };
+}
+
+function onBar(i, d, x, ctx) {
+  const a = x.atr[i];
+  if (!(a > 0)) return null;
+  const up   = x.fast[i] > x.slow[i] && x.fast[i-1] <= x.slow[i-1];
+  const down = x.fast[i] < x.slow[i] && x.fast[i-1] >= x.slow[i-1];
+  if (!up && !down) return null;
+
+  if (ctx.p.filters) {
+    if (x.adx[i] < ADX_MIN) { ctx.skip('sideways (ADX below ' + ADX_MIN + ')'); return null; }
+    if (!(d.volume[i] > 0) || !(d.volume[i] >= VOL_MULT * x.volAvg[i-1])) {
+      ctx.skip('volume too low'); return null;
+    }
+  }
+
+  if (up)   return { side: 'buy',  sl: d.close[i] - 1.5 * a, rr: ctx.p.rr };
+  return        { side: 'sell', sl: d.close[i] + 1.5 * a, rr: ctx.p.rr };
+}
+`},
 donchian: {name:'Donchian breakout + trend', code:`// ===== Donchian breakout in the direction of the trend =====
 const params = { n: [20, 55], slATR: [1.5, 2], rr: [2, 3] };
 
@@ -295,7 +437,7 @@ function onBar(i, d, x, ctx) {
 function workerMain(){
   const wild=(a,n)=>{const o=new Array(a.length).fill(NaN);let e=NaN;for(let i=0;i<a.length;i++){const v=a[i];if(!isFinite(v)){o[i]=NaN;continue;}e=isFinite(e)?e+(v-e)/n:v;o[i]=e;}return o;};
   const ind={
-    sma(a,n){const o=new Array(a.length).fill(NaN);let s=0;for(let i=0;i<a.length;i++){s+=a[i];if(i>=n)s-=a[i-n];if(i>=n-1)o[i]=s/n;}return o;},
+    sma(a,n){const o=new Array(a.length).fill(NaN);let s=0,c=0;for(let i=0;i<a.length;i++){const v=a[i];if(isFinite(v)){s+=v;c++;}if(i>=n){const u=a[i-n];if(isFinite(u)){s-=u;c--;}}if(i>=n-1&&c===n)o[i]=s/n;}return o;},
     ema(a,n){const k=2/(n+1),o=new Array(a.length).fill(NaN);let e=a[0];o[0]=e;for(let i=1;i<a.length;i++){e=a[i]*k+e*(1-k);o[i]=e;}return o;},
     rsi(a,n=14){const o=new Array(a.length).fill(NaN);let g=0,l=0;for(let i=1;i<a.length;i++){const df=a[i]-a[i-1],u=Math.max(df,0),dn=Math.max(-df,0);if(i<=n){g+=u/n;l+=dn/n;}else{g=(g*(n-1)+u)/n;l=(l*(n-1)+dn)/n;}if(i>=n)o[i]=l===0?100:100-100/(1+g/l);}return o;},
     tr(d){const o=new Array(d.close.length);for(let i=0;i<o.length;i++){const pc=i?d.close[i-1]:d.open[i];o[i]=Math.max(d.high[i]-d.low[i],Math.abs(d.high[i]-pc),Math.abs(d.low[i]-pc));}return o;},
@@ -312,8 +454,9 @@ function workerMain(){
   };
 
   function runOne(mod,p,d,x,cfg){
-    const N=d.close.length,O=d.open,H=d.high,L=d.low,mult=cfg.lots*cfg.contract;
-    const usd=(diff,px)=>cfg.quoteUSD?diff*mult:diff*mult/px;
+    const N=d.close.length,O=d.open,H=d.high,L=d.low;
+    const perLot=(diff,px)=>cfg.quoteUSD?diff*cfg.contract:diff*cfg.contract/px;
+    let bal=cfg.balance;
     const trades=[],skips={},nDay={},pnlDay={};
     const bump=m=>{skips[m]=(skips[m]||0)+1;};
     const ctx={p,spread:cfg.spread,skip:bump,entry:null};
@@ -331,8 +474,15 @@ function workerMain(){
       if(cfg.dailyLoss>0&&(pnlDay[day]||0)<=-cfg.dailyLoss){bump('daily loss limit');i++;continue;}
       const entry=ctx.entry(sig.side),sl=Number(sig.sl);
       if(!isFinite(sl)||(buy?sl>=entry:sl<=entry)){bump('invalid SL');i++;continue;}
-      const risk=Math.abs(entry-sl),riskUsd=usd(risk,entry);
-      if(cfg.maxRisk>0&&riskUsd>cfg.maxRisk){bump('risk above max');i++;continue;}
+      const risk=Math.abs(entry-sl),rpl=perLot(risk,entry);
+      let lots=cfg.lots;
+      if(cfg.riskPct>0){
+        lots=Math.floor((bal*cfg.riskPct/100)/rpl/cfg.lotStep+1e-9)*cfg.lotStep;
+        lots=Math.min(lots,cfg.maxLots);lots=Number(lots.toFixed(2));
+        if(lots<cfg.minLot){bump('below min lot (stop too wide for the risk %)');i++;continue;}
+      }
+      const riskUsd=rpl*lots;
+      if(cfg.riskPct<=0&&cfg.maxRisk>0&&riskUsd>cfg.maxRisk){bump('risk above max');i++;continue;}
       let tp=sig.tp!=null?Number(sig.tp):(sig.rr!=null?entry+dir*Number(sig.rr)*risk:NaN);
       if(!isFinite(tp)||(buy?tp<=entry:tp>=entry)){bump('invalid TP');i++;continue;}
       let j=i+1,exit=null,reason=null;
@@ -342,28 +492,28 @@ function workerMain(){
         if(cfg.maxBars&&j-i>=cfg.maxBars){exit=d.close[j]+(buy?0:cfg.spread);reason='time';break;}
       }
       if(exit===null){bump('open at end of data');break;}
-      const pnl=usd((exit-entry)*dir,entry);
+      const pnl=perLot((exit-entry)*dir,entry)*lots;bal+=pnl;
       nDay[day]=(nDay[day]||0)+1;pnlDay[d.day[j]]=(pnlDay[d.day[j]]||0)+pnl;
-      trades.push({i:i+1,j,ti:d.time[i+1],tj:d.time[j],side:sig.side,entry,sl,tp,exit,reason,pnl,r:pnl/riskUsd,risk:riskUsd});
+      trades.push({i:i+1,j,ti:d.time[i+1],tj:d.time[j],side:sig.side,entry,sl,tp,exit,reason,pnl,r:pnl/riskUsd,risk:riskUsd,lots});
       busy=j;i=j+1;
     }
     return{trades,skips};
   }
 
-  function summarize(trades,N,isFrac,d){
+  function summarize(trades,N,isFrac,d,bal0){
     const n=trades.length;
-    const base={n,net:0,win:0,pf:0,avgR:0,dd:0,isNet:0,oosNet:0,isN:0,oosN:0,avgWin:0,avgLoss:0,streak:0,perDay:0};
+    const base={n,net:0,win:0,pf:0,avgR:0,dd:0,ddPct:0,ret:0,isNet:0,oosNet:0,isN:0,oosN:0,avgWin:0,avgLoss:0,streak:0,perDay:0};
     if(!n)return{sum:base,equity:[],monthly:{}};
-    let gp=0,gl=0,w=0,eq=0,peak=0,dd=0,rs=0,cs=0,ms=0;const equity=[],monthly={};
+    let gp=0,gl=0,w=0,eq=0,peak=0,dd=0,rs=0,cs=0,ms=0,ddp=0;const equity=[],monthly={};
     const cut=Math.floor(N*isFrac);
     for(const t of trades){
       if(t.pnl>0){gp+=t.pnl;w++;cs=0;}else{gl-=t.pnl;cs++;if(cs>ms)ms=cs;}
-      eq+=t.pnl;equity.push(eq);if(eq>peak)peak=eq;if(peak-eq>dd)dd=peak-eq;rs+=t.r;
+      eq+=t.pnl;equity.push(eq);if(eq>peak)peak=eq;if(peak-eq>dd)dd=peak-eq;{const pb=bal0+peak;if(pb>0&&(peak-eq)/pb*100>ddp)ddp=(peak-eq)/pb*100;}rs+=t.r;
       const mo=new Date(t.tj).toISOString().slice(0,7);monthly[mo]=(monthly[mo]||0)+t.pnl;
       if(t.i<cut){base.isNet+=t.pnl;base.isN++;}else{base.oosNet+=t.pnl;base.oosN++;}
     }
     const days=Math.max(1,(d.time[N-1]-d.time[0])/86400000);
-    Object.assign(base,{net:eq,win:100*w/n,pf:gl?gp/gl:(gp?99:0),avgR:rs/n,dd,avgWin:w?gp/w:0,avgLoss:n-w?gl/(n-w):0,streak:ms,perDay:n/days,cut});
+    Object.assign(base,{net:eq,win:100*w/n,pf:gl?gp/gl:(gp?99:0),avgR:rs/n,dd,avgWin:w?gp/w:0,avgLoss:n-w?gl/(n-w):0,streak:ms,perDay:n/days,cut,ddPct:ddp,ret:bal0>0?eq/bal0*100:0});
     return{sum:base,equity,monthly};
   }
 
@@ -373,9 +523,12 @@ function workerMain(){
       const hour=new Array(N),day=new Array(N);
       for(let i=0;i<N;i++){const dt=new Date(cdl.t[i]);hour[i]=dt.getUTCHours();day[i]=Math.floor(cdl.t[i]/86400000);}
       const d={open:cdl.o,high:cdl.h,low:cdl.l,close:cdl.c,time:cdl.t,hour,day};
+      const real=!!(cdl.v&&cdl.v.filter(x=>x>0).length>N/2);
+      if(real){d.volume=cdl.v;}else{const trv=ind.tr(d);d.volume=trv.map((v,i)=>Math.round(v/d.close[i]*1e6));}
+      d.volumeIsProxy=!real;
       const mod=new Function('ind',code+'\n;return {config:(typeof config!=="undefined")?config:{},params:(typeof params!=="undefined")?params:null,prepare:(typeof prepare==="function")?prepare:null,onBar:(typeof onBar==="function")?onBar:null};')(ind);
       if(!mod.onBar)throw new Error('Your code must define function onBar(i, d, x, ctx)');
-      const cfg=Object.assign({warmup:60,maxBars:0},s,mod.config||{});
+      const cfg=Object.assign({warmup:60,maxBars:0,lotStep:0.01,minLot:0.01,maxLots:50,riskPct:0,balance:10000},s,mod.config||{});
       let combos=[{}];
       if(mod.params&&typeof mod.params==='object'){
         const keys=Object.keys(mod.params);combos=[{}];
@@ -386,10 +539,10 @@ function workerMain(){
       for(const p of combos){
         let x={};
         try{x=mod.prepare?mod.prepare(d,ind,p):{};}catch(err){throw new Error('prepare() crashed: '+err.message);}
-        const r=runOne(mod,p,d,x,cfg),sm=summarize(r.trades,N,cfg.isFrac,d);
+        const r=runOne(mod,p,d,x,cfg),sm=summarize(r.trades,N,cfg.isFrac,d,cfg.balance);
         results.push({p,sum:sm.sum,equity:sm.equity,monthly:sm.monthly,skips:r.skips,trades:r.trades});
       }
-      self.postMessage({ok:true,results,N,cfg:{warmup:cfg.warmup}});
+      self.postMessage({ok:true,results,N,volProxy:!real,cfg:{warmup:cfg.warmup,riskPct:cfg.riskPct,balance:cfg.balance,lots:cfg.lots}});
     }catch(err){self.postMessage({ok:false,error:String(err&&err.message||err)});}
   };
 }
@@ -408,7 +561,7 @@ function pxFmt(v){const a=Math.abs(v);return a>=500?v.toFixed(2):a>=50?v.toFixed
 
 // ===================================================== state
 let CDL=null, CDLKEY='', RES=null, SEL=0, running=false;
-const SET0={key:'',sym:'XAUUSD',tf:'15min',pages:'3',lots:0.01,spread:0.30,contract:100,quoteUSD:'1',maxDay:10,dailyLoss:20,maxRisk:10,isPct:60};
+const SET0={key:'',sym:'XAUUSD',tf:'15min',pages:'3',lots:0.01,spread:0.30,contract:100,quoteUSD:'1',maxDay:10,dailyLoss:20,maxRisk:10,isPct:60,balance:10000,riskPct:0};
 let ST=Object.assign({},SET0,lsGet('bt_set',{}));
 
 // ===================================================== tabs
@@ -426,31 +579,31 @@ function fillSymbols(){
 function loadSettingsToForm(){
   $('#apiKey').value=ST.key;$('#sym').value=ST.sym;$('#tf').value=ST.tf;$('#pages').value=ST.pages;
   $('#lots').value=ST.lots;$('#spread').value=ST.spread;$('#contract').value=ST.contract;$('#quoteUSD').value=ST.quoteUSD;
-  $('#maxDay').value=ST.maxDay;$('#dailyLoss').value=ST.dailyLoss;$('#maxRisk').value=ST.maxRisk;$('#isPct').value=ST.isPct;
+  $('#balance').value=ST.balance;$('#riskPct').value=ST.riskPct;$('#maxDay').value=ST.maxDay;$('#dailyLoss').value=ST.dailyLoss;$('#maxRisk').value=ST.maxRisk;$('#isPct').value=ST.isPct;
 }
 function readForm(){
   ST={key:$('#apiKey').value.trim(),sym:$('#sym').value,tf:$('#tf').value,pages:$('#pages').value,
     lots:parseFloat($('#lots').value)||0.01,spread:parseFloat($('#spread').value)||0,contract:parseFloat($('#contract').value)||1,
     quoteUSD:$('#quoteUSD').value,maxDay:parseInt($('#maxDay').value)||10,dailyLoss:parseFloat($('#dailyLoss').value)||0,
-    maxRisk:parseFloat($('#maxRisk').value)||0,isPct:Math.min(95,Math.max(30,parseFloat($('#isPct').value)||60))};
+    balance:parseFloat($('#balance').value)||10000,riskPct:parseFloat($('#riskPct').value)||0,maxRisk:parseFloat($('#maxRisk').value)||0,isPct:Math.min(95,Math.max(30,parseFloat($('#isPct').value)||60))};
   lsSet('bt_set',ST);
 }
 $('#sym').addEventListener('change',()=>{const s=SYMS[$('#sym').value];$('#spread').value=s.spread;$('#contract').value=s.contract;$('#quoteUSD').value=String(s.quoteUSD);readForm();updateDataInfo();});
-for(const id of ['apiKey','tf','pages','lots','spread','contract','quoteUSD','maxDay','dailyLoss','maxRisk','isPct'])$('#'+id).addEventListener('change',()=>{readForm();updateDataInfo();});
+for(const id of ['apiKey','tf','pages','lots','spread','contract','quoteUSD','balance','riskPct','maxDay','dailyLoss','maxRisk','isPct'])$('#'+id).addEventListener('change',()=>{readForm();updateDataInfo();});
 
 // ===================================================== data: IndexedDB cache + Twelve Data
 function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('bt',1);r.onupgradeneeded=()=>r.result.createObjectStore('c');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
 async function idbGet(k){try{const db=await idb();return await new Promise(res=>{const q=db.transaction('c').objectStore('c').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(null);});}catch(e){return null;}}
 async function idbSet(k,v){try{const db=await idb();await new Promise(res=>{const t=db.transaction('c','readwrite');t.objectStore('c').put(v,k);t.oncomplete=res;t.onerror=res;});}catch(e){}}
-const dataKey=()=>[ST.sym,ST.tf,ST.pages].join('|');
+const dataKey=()=>[ST.sym,ST.tf,ST.pages,'v2'].join('|');
 const TTL=6*3600*1000;
 
 function demoData(){
   let s=12345;const rnd=()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
   const gauss=()=>{let u=0,v=0;while(!u)u=rnd();while(!v)v=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
-  const n=12000,t=[],o=[],h=[],l=[],c=[];let px=2600,drift=0,start=Date.UTC(2026,0,1);
-  for(let i=0;i<n;i++){if(i%300===0)drift=[-0.35,0,0.35][Math.floor(rnd()*3)];const op=px;px=op+drift+1.6*gauss();t.push(start+i*900000);o.push(op);c.push(px);h.push(Math.max(op,px)+Math.abs(gauss())*0.8);l.push(Math.min(op,px)-Math.abs(gauss())*0.8);}
-  return{t,o,h,l,c};
+  const n=12000,t=[],o=[],h=[],l=[],c=[],v=[];let px=2600,drift=0,start=Date.UTC(2026,0,1);
+  for(let i=0;i<n;i++){if(i%300===0)drift=[-0.35,0,0.35][Math.floor(rnd()*3)];const op=px;px=op+drift+1.6*gauss();t.push(start+i*900000);o.push(op);c.push(px);h.push(Math.max(op,px)+Math.abs(gauss())*0.8);l.push(Math.min(op,px)-Math.abs(gauss())*0.8);v.push(Math.round(700+500*Math.abs(gauss())+Math.abs(px-op)*120));}
+  return{t,o,h,l,c,v};
 }
 async function fetchTD(sym,tf,pages,onProg){
   if(!ST.key)throw new Error('Add your Twelve Data API key in Settings first.');
@@ -468,8 +621,8 @@ async function fetchTD(sym,tf,pages,onProg){
     if(p<pages-1)await sleep(8000);   // free plan: 8 requests / minute
   }
   const rows=[...all.values()].sort((a,b)=>a.datetime<b.datetime?-1:1);
-  const out={t:[],o:[],h:[],l:[],c:[]};
-  for(const r of rows){out.t.push(Date.parse(r.datetime.replace(' ','T')+'Z'));out.o.push(+r.open);out.h.push(+r.high);out.l.push(+r.low);out.c.push(+r.close);}
+  const out={t:[],o:[],h:[],l:[],c:[],v:[]};
+  for(const r of rows){out.t.push(Date.parse(r.datetime.replace(' ','T')+'Z'));out.o.push(+r.open);out.h.push(+r.high);out.l.push(+r.low);out.c.push(+r.close);out.v.push(+r.volume||0);}
   return out;
 }
 async function ensureData(force,onProg){
@@ -482,10 +635,11 @@ async function ensureData(force,onProg){
   await idbSet(key,{at:Date.now(),cdl});
   CDL=cdl;CDLKEY=key;updateDataInfo();return CDL;
 }
+const hasVol=c=>!!(c.v&&c.v.filter(x=>x>0).length>c.v.length/2);
 function updateDataInfo(){
   const ok=CDL&&CDLKEY===dataKey();
   $('#dataChip').textContent=ok?(ST.sym+' '+ST.tf.replace('min','m').replace('1day','1D')):'No data loaded';
-  $('#dataInfo').textContent=ok?(CDL.t.length.toLocaleString()+' candles, '+fmtT(CDL.t[0]).slice(0,10)+' to '+fmtT(CDL.t[CDL.t.length-1]).slice(0,10)+'. Cached on this phone.'):'Data is cached on this phone, so repeat runs use no credits.';
+  $('#dataInfo').textContent=ok?(CDL.t.length.toLocaleString()+' candles, '+fmtT(CDL.t[0]).slice(0,10)+' to '+fmtT(CDL.t[CDL.t.length-1]).slice(0,10)+'. '+(hasVol(CDL)?'Real volume included.':'No real volume in this data (a range-based proxy is used if your strategy reads volume).')+' Cached on this phone.'):'Data is cached on this phone, so repeat runs use no credits.';
 }
 $('#btnLoad').addEventListener('click',async()=>{
   readForm();const b=$('#btnLoad');b.disabled=true;
@@ -543,7 +697,7 @@ $('#run').addEventListener('click',async()=>{
     await ensureData(false,t=>{b.innerHTML='<span class="spin"></span>'+esc(t);});
     b.innerHTML='<span class="spin"></span>Running...';
     await sleep(30);
-    const s={lots:ST.lots,spread:ST.spread,contract:ST.contract,quoteUSD:ST.quoteUSD==='1',maxTradesDay:ST.maxDay,dailyLoss:ST.dailyLoss,maxRisk:ST.maxRisk,isFrac:ST.isPct/100};
+    const s={lots:ST.lots,spread:ST.spread,contract:ST.contract,quoteUSD:ST.quoteUSD==='1',maxTradesDay:ST.maxDay,dailyLoss:ST.dailyLoss,maxRisk:ST.maxRisk,isFrac:ST.isPct/100,balance:ST.balance,riskPct:ST.riskPct};
     const out=await runWorker($('#code').value,CDL,s);
     RES=out;SEL=0;renderResults();showTab('res');
     $('#heroSub').textContent=ST.sym+' '+ST.tf.replace('min','m').replace('1day','1D')+' | '+CDL.t.length.toLocaleString()+' candles | '+out.results.length+(out.results.length>1?' combinations':' run');
@@ -586,9 +740,11 @@ function renderResults(){
     $('#v-res').innerHTML=h;wireResults();return;
   }
   const ps=Object.keys(r.p).map(k=>k+'='+r.p[k]).join(' | ');
-  h+=`<div class="card"><div class="big"><small>NET RESULT ${ps?'('+esc(ps)+')':''}</small><b class="${s.net>=0?'up':'dn'}">${m$(s.net)}</b><span>${s.n} trades at ${ST.lots} lot</span></div>
+  h+=`<div class="card"><div class="big"><small>NET RESULT ${ps?'('+esc(ps)+')':''}</small><b class="${s.net>=0?'up':'dn'}">${m$(s.net)}</b><span>${s.n} trades | ${RES.cfg.riskPct>0?RES.cfg.riskPct+'% risk per trade, start $'+RES.cfg.balance:RES.cfg.lots+' lot'}</span></div>
   <div class="kpis"><div class="k"><b>${f1(s.win)}%</b><span>Win rate</span></div><div class="k"><b>${s.pf.toFixed(2)}</b><span>Profit factor</span></div><div class="k"><b>${s.avgR.toFixed(2)}R</b><span>Avg R</span></div>
-  <div class="k"><b class="dn">-$${s.dd.toFixed(0)}</b><span>Max drawdown</span></div><div class="k"><b>$${s.avgWin.toFixed(1)} / -$${s.avgLoss.toFixed(1)}</b><span>Avg win / loss</span></div><div class="k"><b>${s.streak}</b><span>Worst loss streak</span></div></div></div>`;
+  <div class="k"><b class="${s.ret>=0?'up':'dn'}">${s.ret>=0?'+':''}${s.ret.toFixed(1)}%</b><span>Return on $${RES.cfg.balance}</span></div><div class="k"><b class="dn">-${s.ddPct.toFixed(1)}%</b><span>Max drawdown</span></div><div class="k"><b>${s.streak}</b><span>Worst loss streak</span></div>
+  <div class="k"><b>$${s.avgWin.toFixed(1)} / -$${s.avgLoss.toFixed(1)}</b><span>Avg win / loss</span></div><div class="k"><b class="dn">-$${s.dd.toFixed(0)}</b><span>Max drawdown $</span></div><div class="k"><b>${s.perDay.toFixed(1)}</b><span>Trades per day</span></div></div></div>`;
+  h+=`<div class="card"><div class="hint" style="margin:0">Volume data: ${RES.volProxy?'no real volume in this data, so a range-based proxy was used when your code reads d.volume.':'real volume.'}</div></div>`;
   h+=`<div class="card"><h3>In-sample vs out-of-sample</h3><div class="cmp"><div><small>First ${Math.round(ST.isPct)}% (${s.isN} trades)</small><b class="${s.isNet>=0?'up':'dn'}">${m$(s.isNet)}</b></div><div><small>Last ${100-Math.round(ST.isPct)}% (${s.oosN} trades)</small><b class="${s.oosNet>=0?'up':'dn'}">${m$(s.oosNet)}</b></div></div>
   ${verdict(s)}</div>`;
   h+=`<div class="card chart"><h3>Equity curve ($)</h3>${equitySVG(r,s.cut,N)}</div>`;
@@ -629,7 +785,7 @@ function openTrade(k){
   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${s}</svg>
   <div class="kv"><span>Entered</span><b>${fmtT(t.ti)} UTC</b></div><div class="kv"><span>Exited (${t.reason})</span><b>${fmtT(t.tj)} UTC</b></div>
   <div class="kv"><span>Entry / SL / TP</span><b>${pxFmt(t.entry)} / ${pxFmt(t.sl)} / ${pxFmt(t.tp)}</b></div>
-  <div class="kv"><span>Risk / result</span><b>$${t.risk.toFixed(2)} / ${t.r.toFixed(2)}R</b></div><div class="kv"><span>Bars held</span><b>${t.j-t.i+1}</b></div>`;
+  <div class="kv"><span>Lots</span><b>${t.lots}</b></div><div class="kv"><span>Risk / result</span><b>$${t.risk.toFixed(2)} / ${t.r.toFixed(2)}R</b></div><div class="kv"><span>Bars held</span><b>${t.j-t.i+1}</b></div>`;
   $('#modal').classList.add('on');$('#xc').onclick=closeSheet;
 }
 function closeSheet(){$('#modal').classList.remove('on');}
