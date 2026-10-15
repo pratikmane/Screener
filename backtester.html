@@ -66,10 +66,10 @@ h3:first-child{margin-top:0}
 .tr .r{text-align:right}.tr .r b{display:block;font-size:13.5px}.tr .r span{font-size:11px;color:var(--mut)}
 .bs{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:8px;margin-left:6px}
 .bs.buy{background:#e3f8ee;color:var(--up)}.bs.sell{background:#fde8e8;color:var(--dn)}
-.tbl{width:100%;border-collapse:collapse;font-size:12px}
-.tbl th{font-size:10.5px;color:var(--mut);font-weight:600;text-align:right;padding:6px 4px}
-.tbl td{padding:9px 4px;text-align:right;border-top:1px solid var(--line)}
-.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{font-size:10px;color:var(--mut);font-weight:600;text-align:right;padding:6px 3px}
+.tbl td{padding:9px 3px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{text-align:left;white-space:normal;font-weight:600}
 .tbl tr.sel td{background:#eef1ff}
 .tbl tr.row{cursor:pointer}
 .scroll{overflow-x:auto}
@@ -502,7 +502,7 @@ function workerMain(){
 
   function summarize(trades,N,isFrac,d,bal0){
     const n=trades.length;
-    const base={n,net:0,win:0,pf:0,avgR:0,dd:0,ddPct:0,ret:0,isNet:0,oosNet:0,isN:0,oosN:0,avgWin:0,avgLoss:0,streak:0,perDay:0};
+    const base={n,wins:0,losses:0,net:0,win:0,pf:0,avgR:0,dd:0,ddPct:0,ret:0,isNet:0,oosNet:0,isN:0,oosN:0,avgWin:0,avgLoss:0,streak:0,perDay:0};
     if(!n)return{sum:base,equity:[],monthly:{}};
     let gp=0,gl=0,w=0,eq=0,peak=0,dd=0,rs=0,cs=0,ms=0,ddp=0;const equity=[],monthly={};
     const cut=Math.floor(N*isFrac);
@@ -513,7 +513,7 @@ function workerMain(){
       if(t.i<cut){base.isNet+=t.pnl;base.isN++;}else{base.oosNet+=t.pnl;base.oosN++;}
     }
     const days=Math.max(1,(d.time[N-1]-d.time[0])/86400000);
-    Object.assign(base,{net:eq,win:100*w/n,pf:gl?gp/gl:(gp?99:0),avgR:rs/n,dd,avgWin:w?gp/w:0,avgLoss:n-w?gl/(n-w):0,streak:ms,perDay:n/days,cut,ddPct:ddp,ret:bal0>0?eq/bal0*100:0});
+    Object.assign(base,{wins:w,losses:n-w,net:eq,win:100*w/n,pf:gl?gp/gl:(gp?99:0),avgR:rs/n,dd,avgWin:w?gp/w:0,avgLoss:n-w?gl/(n-w):0,streak:ms,perDay:n/days,cut,ddPct:ddp,ret:bal0>0?eq/bal0*100:0});
     return{sum:base,equity,monthly};
   }
 
@@ -731,9 +731,9 @@ function monthlySVG(mon){
 function renderResults(){
   const R=RES.results,r=R[SEL],s=r.sum,N=RES.N;let h='';
   if(R.length>1){
-    h+=`<div class="card"><h3>Sweep: ${R.length} combinations (tap a row)</h3><div class="scroll"><table class="tbl"><tr><th>Params</th><th>Trades</th><th>Net</th><th>In-sample</th><th>Out-of-sample</th><th>PF</th></tr>`;
-    R.forEach((q,i)=>{const ps=Object.keys(q.p).map(k=>k+'='+q.p[k]).join(' ');h+=`<tr class="row ${i===SEL?'sel':''}" data-c="${i}"><td>${esc(ps)}</td><td>${q.sum.n}</td><td class="${q.sum.net>=0?'up':'dn'}">${q.sum.net.toFixed(0)}</td><td class="${q.sum.isNet>=0?'up':'dn'}">${q.sum.isNet.toFixed(0)}</td><td class="${q.sum.oosNet>=0?'up':'dn'}">${q.sum.oosNet.toFixed(0)}</td><td>${q.sum.pf.toFixed(2)}</td></tr>`;});
-    h+=`</table></div><div class="hint">Picking the best row is how overfitting happens. Prefer settings where <b>both</b> in-sample and out-of-sample are positive and neighbouring rows look similar.</div></div>`;
+    h+=`<div class="card"><h3>Sweep: ${R.length} combinations (tap a row)</h3><div class="scroll"><table class="tbl"><tr><th>${esc(Object.keys(R[0].p).join(' · ')||'Params')}</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Net</th><th>IS</th><th>OOS</th><th>PF</th></tr>`;
+    R.forEach((q,i)=>{const ps=Object.keys(q.p).map(k=>q.p[k]).join(' · ');h+=`<tr class="row ${i===SEL?'sel':''}" data-c="${i}"><td>${esc(ps)}</td><td>${q.sum.n}</td><td class="up">${q.sum.wins}</td><td class="dn">${q.sum.losses}</td><td class="${q.sum.net>=0?'up':'dn'}">${q.sum.net.toFixed(0)}</td><td class="${q.sum.isNet>=0?'up':'dn'}">${q.sum.isNet.toFixed(0)}</td><td class="${q.sum.oosNet>=0?'up':'dn'}">${q.sum.oosNet.toFixed(0)}</td><td>${q.sum.pf.toFixed(2)}</td></tr>`;});
+    h+=`</table></div><div class="hint">IS = in-sample (first part of the data), OOS = out-of-sample (the unseen last part). Picking the best row is how overfitting happens. Prefer settings where <b>both</b> in-sample and out-of-sample are positive and neighbouring rows look similar.</div></div>`;
   }
   if(!s.n){
     h+=`<div class="card"><div class="empty">No trades were taken.</div>${skipTags(r.skips)}</div>`;
@@ -741,7 +741,8 @@ function renderResults(){
   }
   const ps=Object.keys(r.p).map(k=>k+'='+r.p[k]).join(' | ');
   h+=`<div class="card"><div class="big"><small>NET RESULT ${ps?'('+esc(ps)+')':''}</small><b class="${s.net>=0?'up':'dn'}">${m$(s.net)}</b><span>${s.n} trades | ${RES.cfg.riskPct>0?RES.cfg.riskPct+'% risk per trade, start $'+RES.cfg.balance:RES.cfg.lots+' lot'}</span></div>
-  <div class="kpis"><div class="k"><b>${f1(s.win)}%</b><span>Win rate</span></div><div class="k"><b>${s.pf.toFixed(2)}</b><span>Profit factor</span></div><div class="k"><b>${s.avgR.toFixed(2)}R</b><span>Avg R</span></div>
+  <div class="kpis"><div class="k"><b>${s.n}</b><span>Total trades</span></div><div class="k"><b class="up">${s.wins}</b><span>Winning trades</span></div><div class="k"><b class="dn">${s.losses}</b><span>Losing trades</span></div>
+  <div class="k"><b>${f1(s.win)}%</b><span>Win rate</span></div><div class="k"><b>${s.pf.toFixed(2)}</b><span>Profit factor</span></div><div class="k"><b>${s.avgR.toFixed(2)}R</b><span>Avg R</span></div>
   <div class="k"><b class="${s.ret>=0?'up':'dn'}">${s.ret>=0?'+':''}${s.ret.toFixed(1)}%</b><span>Return on $${RES.cfg.balance}</span></div><div class="k"><b class="dn">-${s.ddPct.toFixed(1)}%</b><span>Max drawdown</span></div><div class="k"><b>${s.streak}</b><span>Worst loss streak</span></div>
   <div class="k"><b>$${s.avgWin.toFixed(1)} / -$${s.avgLoss.toFixed(1)}</b><span>Avg win / loss</span></div><div class="k"><b class="dn">-$${s.dd.toFixed(0)}</b><span>Max drawdown $</span></div><div class="k"><b>${s.perDay.toFixed(1)}</b><span>Trades per day</span></div></div></div>`;
   h+=`<div class="card"><div class="hint" style="margin:0">Volume data: ${RES.volProxy?'no real volume in this data, so a range-based proxy was used when your code reads d.volume.':'real volume.'}</div></div>`;
