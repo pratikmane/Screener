@@ -138,7 +138,6 @@ function onBar(i, d, x, ctx) {
       <p><code>ctx.skip('reason')</code> counts why a signal was skipped. <code>ctx.p</code> holds the current parameter set.</p>
       <p><b>Sweep:</b> add <code>const params = { n:[20,55], rr:[2,3] };</code> and read <code>p.n</code>, <code>p.rr</code> in your functions. The tool runs every combination (max 40) and shows a table.</p>
       <p><b>Helpers (<code>ind</code>):</b> sma, ema, rsi, atr(d,n,'sma'|'wilder'), adx, stdev, bbands, highest, lowest, swings(d,n), nearestSwing(...). See the templates for examples.</p>
-      <p><b>Trailing stop:</b> add <code>trail: { start: 2, dist: 1 }</code> to the trade you return (price units). Once price has moved <code>start</code> in your favour, the stop follows <code>dist</code> behind the best price and never moves back. <code>be: 1</code> moves the stop to break-even after a 1 move. Add <code>noTp: true</code> to drop the take-profit and let the trail run. The stop moves only after a candle closes.</p>
       <p>Optional <code>const config = { lots:0.01, maxBars:48, warmup:60 };</code></p>
       <p>Only paste code you trust.</p>
     </details>
@@ -411,84 +410,6 @@ function onBar(i, d, x, ctx) {
   return        { side: 'sell', sl: d.close[i] + 1.5 * a, rr: ctx.p.rr };
 }
 `},
-bostrail: {name:'BOS + 2-candle with trailing stop', code:`// ===== BOS + 2-candle strategy WITH TRAILING STOP =====
-// Entry rules are exactly the BOS + 2-candle strategy:
-//   BOS down = a candle CLOSES below the last confirmed swing low  -> structure "down"
-//   BOS up   = a candle CLOSES above the last confirmed swing high -> structure "up"
-//   mode 'counter' (YOUR rule): after BOS down, two green candles -> BUY.
-//                               after BOS up,   two red candles   -> SELL.
-//   mode 'with' = the opposite (continuation).
-// NEW: the stop can TRAIL. R = the stop distance (slPrice). The stop moves only
-// after a candle closes, and never backwards.
-//   'none'                 : fixed SL and TP (your original)
-//   'BE at 1R'             : move the stop to break-even once price is 1R in profit
-//   'trail 1R after 1R'    : once 1R in profit, the stop follows 1R behind the best price
-//   'trail 0.5R after 1R'  : same, but tighter (0.5R behind)
-//   'trail 1R, no TP'      : no take-profit, the trail lets winners run
-
-const TRAILS = {
-  'none':                null,
-  'BE at 1R':            { be: 1 },
-  'trail 1R after 1R':   { start: 1, dist: 1 },
-  'trail 0.5R after 1R': { start: 1, dist: 0.5 },
-  'trail 1R, no TP':     { start: 1, dist: 1, noTp: true }
-};
-
-const params = {
-  mode: ['counter'],               // your rule. Use ['counter','with'] to test both
-  swingN: [3],
-  slPrice: [2],                    // stop distance in price units (gold: 2 = $2)
-  rr: [2],                         // take profit = rr x stop (ignored by the no-TP row)
-  trail: Object.keys(TRAILS)
-};
-
-const config = { warmup: 60 };
-
-function prepare(d, ind, p) {
-  const n = p.swingN, N = d.close.length;
-  const sw = ind.swings(d, n);
-  const state = new Array(N).fill(0), bos = new Array(N).fill(-1);
-  let sh = null, sl = null, cur = 0, curBos = -1;
-  for (let j = 0; j < N; j++) {
-    const m = j - n;                         // a swing at m is only KNOWN n candles later
-    if (m >= 0) {
-      if (sw.high[m]) sh = d.high[m];
-      if (sw.low[m])  sl = d.low[m];
-    }
-    if (sl !== null && d.close[j] < sl)      { cur = -1; curBos = j; sl = null; }
-    else if (sh !== null && d.close[j] > sh) { cur =  1; curBos = j; sh = null; }
-    state[j] = cur; bos[j] = curBos;
-  }
-  return { state: state, bos: bos };
-}
-
-function onBar(i, d, x, ctx) {
-  const p = ctx.p, st = x.state[i];
-  if (st === 0 || x.bos[i] >= i - 1) return null;       // both candles must be after the BOS
-
-  const green = k => d.close[k] > d.open[k];
-  const red   = k => d.close[k] < d.open[k];
-
-  let side = null;
-  if (p.mode === 'counter') {
-    if (st === -1 && green(i) && green(i-1)) side = 'buy';
-    if (st ===  1 && red(i)   && red(i-1))   side = 'sell';
-  } else {
-    if (st === -1 && red(i)   && red(i-1))   side = 'sell';
-    if (st ===  1 && green(i) && green(i-1)) side = 'buy';
-  }
-  if (!side) return null;
-  if (i - 2 > x.bos[i] && (side === 'buy' ? green(i-2) : red(i-2))) return null;   // skip 3rd same-colour candle
-
-  const buy = side === 'buy', R = p.slPrice, t = TRAILS[p.trail];
-  const out = { side: side, sl: buy ? d.close[i] - R : d.close[i] + R, rr: p.rr };
-  if (t) {
-    out.trail = { be: (t.be || 0) * R, start: (t.start || 0) * R, dist: (t.dist || 0) * R };
-    if (t.noTp) out.noTp = true;
-  }
-  return out;
-}
-`},
 donchian: {name:'Donchian breakout + trend', code:`// ===== Donchian breakout in the direction of the trend =====
 const params = { n: [20, 55], slATR: [1.5, 2], rr: [2, 3] };
 
@@ -562,27 +483,18 @@ function workerMain(){
       }
       const riskUsd=rpl*lots;
       if(cfg.riskPct<=0&&cfg.maxRisk>0&&riskUsd>cfg.maxRisk){bump('risk above max');i++;continue;}
-      const noTp=sig.noTp===true;
-      let tp=noTp?(buy?Infinity:-Infinity):(sig.tp!=null?Number(sig.tp):(sig.rr!=null?entry+dir*Number(sig.rr)*risk:NaN));
-      if(!noTp&&(!isFinite(tp)||(buy?tp<=entry:tp>=entry))){bump('invalid TP');i++;continue;}
-      const tr=sig.trail||null;let curSl=sl,best=entry,trailed=false;
+      let tp=sig.tp!=null?Number(sig.tp):(sig.rr!=null?entry+dir*Number(sig.rr)*risk:NaN);
+      if(!isFinite(tp)||(buy?tp<=entry:tp>=entry)){bump('invalid TP');i++;continue;}
       let j=i+1,exit=null,reason=null;
       for(;j<N;j++){
-        const sHit=buy?L[j]<=curSl:H[j]+cfg.spread>=curSl,tHit=buy?H[j]>=tp:L[j]+cfg.spread<=tp;
-        if(sHit||tHit){exit=sHit?curSl:tp;reason=sHit?(trailed?'TRAIL':'SL'):'TP';break;}
+        const sHit=buy?L[j]<=sl:H[j]+cfg.spread>=sl,tHit=buy?H[j]>=tp:L[j]+cfg.spread<=tp;
+        if(sHit||tHit){exit=sHit?sl:tp;reason=sHit?'SL':'TP';break;}
         if(cfg.maxBars&&j-i>=cfg.maxBars){exit=d.close[j]+(buy?0:cfg.spread);reason='time';break;}
-        if(tr){   // the stop moves only AFTER a candle closes, and only in the trade's favour
-          best=buy?Math.max(best,H[j]):Math.min(best,L[j]);
-          const fav=(best-entry)*dir;let ns=curSl;
-          if(tr.be>0&&fav>=tr.be){const lv=entry+dir*(tr.beOffset||0);ns=buy?Math.max(ns,lv):Math.min(ns,lv);}
-          if(tr.start>0&&tr.dist>0&&fav>=tr.start){const lv=best-dir*tr.dist;ns=buy?Math.max(ns,lv):Math.min(ns,lv);}
-          if(ns!==curSl){curSl=ns;trailed=true;}
-        }
       }
       if(exit===null){bump('open at end of data');break;}
       const pnl=perLot((exit-entry)*dir,entry)*lots;bal+=pnl;
       nDay[day]=(nDay[day]||0)+1;pnlDay[d.day[j]]=(pnlDay[d.day[j]]||0)+pnl;
-      trades.push({i:i+1,j,ti:d.time[i+1],tj:d.time[j],side:sig.side,entry,sl,slEnd:curSl,tp,exit,reason,pnl,r:pnl/riskUsd,risk:riskUsd,lots});
+      trades.push({i:i+1,j,ti:d.time[i+1],tj:d.time[j],side:sig.side,entry,sl,tp,exit,reason,pnl,r:pnl/riskUsd,risk:riskUsd,lots});
       busy=j;i=j+1;
     }
     return{trades,skips};
@@ -863,17 +775,17 @@ function wireResults(){
 // ===================================================== trade sheet
 function openTrade(k){
   const t=RES.results[SEL].trades[k],a=Math.max(0,t.i-45),b=Math.min(CDL.t.length-1,t.j+10),n=b-a+1;
-  const fin=isFinite(t.tp),moved=t.slEnd!==t.sl;const hi=Math.max(...CDL.h.slice(a,b+1),fin?t.tp:-Infinity,t.sl,t.slEnd),lo=Math.min(...CDL.l.slice(a,b+1),fin?t.tp:Infinity,t.sl,t.slEnd),pad=(hi-lo)*.06||1e-6;
+  const hi=Math.max(...CDL.h.slice(a,b+1),t.tp,t.sl),lo=Math.min(...CDL.l.slice(a,b+1),t.tp,t.sl),pad=(hi-lo)*.06||1e-6;
   const W=340,H=210,cw=W/n,y=v=>6+(hi+pad-v)/(hi-lo+2*pad)*(H-12);
   let s='';for(let q=0;q<4;q++){const gy=6+q*(H-12)/3;s+=`<line x1="0" x2="${W}" y1="${gy}" y2="${gy}" class="grid"/>`;}
   for(let q=0;q<n;q++){const i=a+q,cx=q*cw+cw/2,u=CDL.c[i]>=CDL.o[i],cl=u?'cu':'cd';
     s+=`<line x1="${cx}" x2="${cx}" y1="${y(CDL.h[i])}" y2="${y(CDL.l[i])}" class="${cl}s" stroke-width="1"/><rect x="${cx-cw*.3}" y="${y(Math.max(CDL.o[i],CDL.c[i]))}" width="${cw*.6}" height="${Math.max(1,Math.abs(y(CDL.o[i])-y(CDL.c[i])))}" class="${cl}"/>`;}
   const ex=(t.i-a)*cw,xx=(t.j-a)*cw+cw/2,line=(v,col,lab)=>`<line x1="${ex}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="${col}" stroke-dasharray="5 3" stroke-width="1.3"/><text x="${W-2}" y="${y(v)-3}" font-size="9" text-anchor="end" fill="${col}">${lab}</text>`;
-  s+=line(t.entry,'#1e3fc0','entry')+line(t.sl,'#e5252a','SL')+(fin?line(t.tp,'#12b76a','TP'):'')+(moved?line(t.slEnd,'#a77b00','trailed SL'):'')+`<circle cx="${xx}" cy="${y(t.exit)}" r="4" fill="${t.pnl>=0?'#12b76a':'#e5252a'}" stroke="#fff" stroke-width="1.5"/>`;
+  s+=line(t.entry,'#1e3fc0','entry')+line(t.sl,'#e5252a','SL')+line(t.tp,'#12b76a','TP')+`<circle cx="${xx}" cy="${y(t.exit)}" r="4" fill="${t.pnl>=0?'#12b76a':'#e5252a'}" stroke="#fff" stroke-width="1.5"/>`;
   $('#sheet').innerHTML=`<div class="hd"><b>${t.side.toUpperCase()} ${m$(t.pnl)}</b><button class="x" id="xc">✕</button></div>
   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${s}</svg>
   <div class="kv"><span>Entered</span><b>${fmtT(t.ti)} UTC</b></div><div class="kv"><span>Exited (${t.reason})</span><b>${fmtT(t.tj)} UTC</b></div>
-  <div class="kv"><span>Entry / SL / TP</span><b>${pxFmt(t.entry)} / ${pxFmt(t.sl)} / ${isFinite(t.tp)?pxFmt(t.tp):'none'}</b></div>${t.slEnd!==t.sl?`<div class="kv"><span>Stop at exit (trailed)</span><b>${pxFmt(t.slEnd)}</b></div>`:''}
+  <div class="kv"><span>Entry / SL / TP</span><b>${pxFmt(t.entry)} / ${pxFmt(t.sl)} / ${pxFmt(t.tp)}</b></div>
   <div class="kv"><span>Lots</span><b>${t.lots}</b></div><div class="kv"><span>Risk / result</span><b>$${t.risk.toFixed(2)} / ${t.r.toFixed(2)}R</b></div><div class="kv"><span>Bars held</span><b>${t.j-t.i+1}</b></div>`;
   $('#modal').classList.add('on');$('#xc').onclick=closeSheet;
 }
