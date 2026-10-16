@@ -33,13 +33,15 @@
    "tp": 4099.22508
   },
   {
+   "close_time": "2026-10-16 04:00:00",
    "entry": 1.12143,
    "id": "EURUSD-202610151130",
    "open_time": "2026-10-15 11:45:00",
+   "pnl": -2.0,
    "side": "SELL",
    "signal_time": "2026-10-15 11:30:00",
    "sl": 1.12343,
-   "status": "OPEN",
+   "status": "SL",
    "structure": "up",
    "symbol": "EURUSD",
    "tp": 1.11743
