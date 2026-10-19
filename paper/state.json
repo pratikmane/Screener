@@ -1,6 +1,6 @@
 {
  "last_signal": {
-  "EURUSD": "2026-10-18 23:30:00",
+  "EURUSD": "2026-10-19 08:15:00",
   "XAUUSD": "2026-10-17 17:00:00"
  },
  "trades": [
@@ -103,16 +103,30 @@
    "tp": 4160.67254
   },
   {
+   "close_time": "2026-10-19 08:00:00",
    "entry": 1.12248,
    "id": "EURUSD-202610182330",
    "open_time": "2026-10-18 23:45:00",
+   "pnl": -2.0,
    "side": "BUY",
    "signal_time": "2026-10-18 23:30:00",
    "sl": 1.12048,
-   "status": "OPEN",
+   "status": "SL",
    "structure": "down",
    "symbol": "EURUSD",
    "tp": 1.12648
+  },
+  {
+   "entry": 1.12079,
+   "id": "EURUSD-202610190815",
+   "open_time": "2026-10-19 08:30:00",
+   "side": "BUY",
+   "signal_time": "2026-10-19 08:15:00",
+   "sl": 1.11879,
+   "status": "OPEN",
+   "structure": "down",
+   "symbol": "EURUSD",
+   "tp": 1.12479
   }
  ]
 }
