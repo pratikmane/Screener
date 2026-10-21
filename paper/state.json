@@ -1,7 +1,7 @@
 {
  "last_signal": {
   "EURUSD": "2026-10-19 08:15:00",
-  "XAUUSD": "2026-10-17 17:00:00"
+  "XAUUSD": "2026-10-21 22:15:00"
  },
  "trades": [
   {
@@ -129,6 +129,18 @@
    "structure": "down",
    "symbol": "EURUSD",
    "tp": 1.12479
+  },
+  {
+   "entry": 4137.25925,
+   "id": "XAUUSD-202610212215",
+   "open_time": "2026-10-21 22:30:00",
+   "side": "SELL",
+   "signal_time": "2026-10-21 22:15:00",
+   "sl": 4139.25925,
+   "status": "OPEN",
+   "structure": "up",
+   "symbol": "XAUUSD",
+   "tp": 4133.25925
   }
  ]
 }
