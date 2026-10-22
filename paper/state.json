@@ -145,25 +145,29 @@
    "tp": 4133.25925
   },
   {
+   "close_time": "2026-10-22 11:15:00",
    "entry": 1.1225,
    "id": "EURUSD-202610221015",
    "open_time": "2026-10-22 10:30:00",
+   "pnl": -2.0,
    "side": "BUY",
    "signal_time": "2026-10-22 10:15:00",
    "sl": 1.1205,
-   "status": "OPEN",
+   "status": "SL",
    "structure": "down",
    "symbol": "EURUSD",
    "tp": 1.1265
   },
   {
+   "close_time": "2026-10-22 10:45:00",
    "entry": 4092.42319,
    "id": "XAUUSD-202610221015",
    "open_time": "2026-10-22 10:30:00",
+   "pnl": -2.0,
    "side": "BUY",
    "signal_time": "2026-10-22 10:15:00",
    "sl": 4090.42319,
-   "status": "OPEN",
+   "status": "SL",
    "structure": "down",
    "symbol": "XAUUSD",
    "tp": 4096.42319
