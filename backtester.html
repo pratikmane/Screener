@@ -410,6 +410,224 @@ function onBar(i, d, x, ctx) {
   return        { side: 'sell', sl: d.close[i] + 1.5 * a, rr: ctx.p.rr };
 }
 `},
+bosob: {name:'BOS + Order Block retest (8 combos)', code:`// ===== BOS + ORDER BLOCK (OB) retest strategy =====
+// 1) BOS: a candle CLOSES beyond the last confirmed swing high (bullish) / swing low (bearish).
+// 2) The move must be impulsive: from the pullback extreme to the BOS close it covers
+//    at least DISP x ATR.
+// 3) ORDER BLOCK: bullish OB = the last bearish candle at the START of that move
+//    (around the pullback low). Zone = that candle's full range (low to high).
+//    Bearish OB = the last bullish candle at the start of a down move.
+// 4) ENTRY: price comes back and touches the zone. A touch candle must still close
+//    above the zone bottom. If confirm = 1 it must also be a bullish candle closing above
+//    the zone's middle (mirror for sells).
+//    The OB is cancelled if a candle closes through the zone, or after MAX_WAIT candles.
+//    One trade per OB.
+// 5) SL: beyond the zone (+ 0.2 ATR).   TP: rr x the stop distance.
+// Size: 0.5% of the balance risked per trade.
+
+const DISP = 1.5;            // minimum impulse size in ATR
+const MAX_WAIT = 30;         // candles to wait for the retest
+const MAX_ZONE_ATR = 2.5;    // skip huge order blocks
+const MIN_RISK_ATR = 0.5, MAX_RISK_ATR = 3.5;
+
+const params = {
+  swingN:  [3, 5],           // candles each side that define a swing
+  confirm: [0, 1],           // 0 = touch is enough, 1 = needs a confirmation candle
+  rr:      [2, 3]
+};
+
+const config = { warmup: 60, riskPct: 0.5, balance: 10000, maxRisk: 0, dailyLoss: 0, maxTradesDay: 5 };
+
+function prepare(d, ind, p) {
+  const n = p.swingN, N = d.close.length, atr = ind.atr(d, 14);
+  const sw = ind.swings(d, n);
+  const sig = new Array(N).fill(0), slp = new Array(N).fill(NaN);
+  let sh = null, shI = -1, sl = null, slI = -1;     // last unbroken swing high / low
+  let bull = null, bear = null;                      // active order blocks {top, bot, born}
+
+  for (let j = 0; j < N; j++) {
+    const m = j - n;                                 // a swing at m is only KNOWN n candles later
+    if (m >= 0) {
+      if (sw.high[m]) { sh = d.high[m]; shI = m; }
+      if (sw.low[m])  { sl = d.low[m];  slI = m; }
+    }
+    const a = atr[j];
+    if (!(a > 0)) continue;
+
+    // --- retest of an existing OB (only on candles AFTER the BOS candle) ---
+    if (bull && j > bull.born) {
+      if (d.close[j] < bull.bot || j - bull.born > MAX_WAIT) bull = null;
+      else if (d.low[j] <= bull.top && d.close[j] > bull.bot &&
+               (!p.confirm || (d.close[j] > d.open[j] && d.close[j] >= (bull.top + bull.bot) / 2))) {
+        sig[j] = 1; slp[j] = bull.bot - 0.2 * a; bull = null;
+      }
+    }
+    if (bear && j > bear.born) {
+      if (d.close[j] > bear.top || j - bear.born > MAX_WAIT) bear = null;
+      else if (d.high[j] >= bear.bot && d.close[j] < bear.top &&
+               (!p.confirm || (d.close[j] < d.open[j] && d.close[j] <= (bear.top + bear.bot) / 2))) {
+        sig[j] = -1; slp[j] = bear.top + 0.2 * a; bear = null;
+      }
+    }
+
+    // --- new BOS on candle j ---
+    if (sh !== null && d.close[j] > sh) {                       // bullish BOS
+      let s = shI;                                              // pullback low between the swing high and now
+      for (let k = shI; k < j; k++) if (d.low[k] < d.low[s]) s = k;
+      if (d.close[j] - d.low[s] >= DISP * a) {
+        for (let k = Math.min(s + 1, j - 1); k >= Math.max(s - 4, 0); k--) {
+          if (d.close[k] < d.open[k]) {                         // last bearish candle at the start of the move
+            if (d.high[k] - d.low[k] <= MAX_ZONE_ATR * a) bull = { top: d.high[k], bot: d.low[k], born: j };
+            break;
+          }
+        }
+      }
+      sh = null; bear = null;                                   // structure flipped: drop the opposite OB
+    } else if (sl !== null && d.close[j] < sl) {                // bearish BOS
+      let s = slI;
+      for (let k = slI; k < j; k++) if (d.high[k] > d.high[s]) s = k;
+      if (d.high[s] - d.close[j] >= DISP * a) {
+        for (let k = Math.min(s + 1, j - 1); k >= Math.max(s - 4, 0); k--) {
+          if (d.close[k] > d.open[k]) {                         // last bullish candle at the start of the move
+            if (d.high[k] - d.low[k] <= MAX_ZONE_ATR * a) bear = { top: d.high[k], bot: d.low[k], born: j };
+            break;
+          }
+        }
+      }
+      sl = null; bull = null;
+    }
+  }
+  return { sig: sig, slp: slp, atr: atr };
+}
+
+function onBar(i, d, x, ctx) {
+  const s = x.sig[i];
+  if (s === 0) return null;
+  const a = x.atr[i], risk = Math.abs(d.close[i] - x.slp[i]);
+  if (risk < MIN_RISK_ATR * a) { ctx.skip('stop too tight'); return null; }
+  if (risk > MAX_RISK_ATR * a) { ctx.skip('stop too wide'); return null; }
+  return { side: s === 1 ? 'buy' : 'sell', sl: x.slp[i], rr: ctx.p.rr };
+}
+`},
+h1pullback: {name:'1H trend pullback (RSI + EMA50)', code:`// ===== 1-HOUR TREND PULLBACK (RSI dip + EMA50 zone) =====
+// Idea: trade WITH the 1H trend, entering when a short pullback ends.
+// BUY : uptrend (EMA50 above EMA200, price above EMA200). Price pulled back to the
+//       EMA50 zone within the last 8 candles. RSI(5) was below 35 and now crosses back
+//       above 35 on a bullish candle that closes above the EMA50.
+// SELL: the mirror image (downtrend, RSI(5) crosses back below 65).
+// SL  : beyond the pullback's low/high (last 8 candles) + 0.3 ATR. Skipped if the
+//       stop would be under 0.8 ATR (too tight) or over 3 ATR (too wide).
+// TP  : rr x the stop distance.
+// adxMin: 0 = off, 20 = only trade when ADX(14) shows a real trend.
+// Size: 0.5% of the balance risked per trade (the results show return % and drawdown %).
+// Win rate vs rr: with rr 1 you need 50% wins to break even, with rr 1.5 you need 40%,
+// with rr 2 you need 33%. Look at Avg R, not just the win rate.
+
+const RSI_LEN = 5, BUY_LEVEL = 35, SELL_LEVEL = 65;
+const SW = 8;                                   // pullback look-back (candles)
+const MIN_RISK_ATR = 0.8, MAX_RISK_ATR = 3;
+
+const params = {
+  rr:     [1, 1.5, 2],
+  adxMin: [0, 20]
+};
+
+const config = { warmup: 220, riskPct: 0.5, balance: 10000, maxRisk: 0, dailyLoss: 0, maxTradesDay: 3 };
+
+function prepare(d, ind, p) {
+  return {
+    rsi: ind.rsi(d.close, RSI_LEN),
+    e50: ind.ema(d.close, 50), e200: ind.ema(d.close, 200),
+    atr: ind.atr(d, 14), adx: ind.adx(d, 14),
+    lowN: ind.lowest(d.low, SW), highN: ind.highest(d.high, SW)
+  };
+}
+
+function onBar(i, d, x, ctx) {
+  const p = ctx.p, a = x.atr[i], e = x.e50[i];
+  const r = x.rsi[i], r1 = x.rsi[i-1];
+  if (!(a > 0) || !(r >= 0) || !(r1 >= 0)) return null;
+
+  const up = e > x.e200[i] && d.close[i] > x.e200[i];
+  const dn = e < x.e200[i] && d.close[i] < x.e200[i];
+
+  const buy  = up && d.close[i] > d.open[i] && d.close[i] > e
+               && r1 <= BUY_LEVEL && r > BUY_LEVEL && x.lowN[i] <= e + 0.5 * a;
+  const sell = dn && d.close[i] < d.open[i] && d.close[i] < e
+               && r1 >= SELL_LEVEL && r < SELL_LEVEL && x.highN[i] >= e - 0.5 * a;
+  if (!buy && !sell) return null;
+
+  if (p.adxMin > 0 && x.adx[i] < p.adxMin) { ctx.skip('ADX below ' + p.adxMin + ' (weak trend)'); return null; }
+
+  const sl = buy ? x.lowN[i] - 0.3 * a : x.highN[i] + 0.3 * a;
+  const risk = Math.abs(d.close[i] - sl);
+  if (risk < MIN_RISK_ATR * a) { ctx.skip('stop too tight'); return null; }
+  if (risk > MAX_RISK_ATR * a) { ctx.skip('stop too wide'); return null; }
+
+  return { side: buy ? 'buy' : 'sell', sl: sl, rr: p.rr };
+}
+`},
+bos2c: {name:'BOS + 2-candle (counter / with)', code:`// ===== BOS + 2-candle strategy =====
+// BOS down = a candle CLOSES below the last confirmed swing low  -> structure "down"
+// BOS up   = a candle CLOSES above the last confirmed swing high -> structure "up"
+// mode 'counter' (YOUR rule): after BOS down, two green candles -> BUY.
+//                             after BOS up,   two red candles   -> SELL.
+// mode 'with' (the opposite): after BOS down, two red candles   -> SELL.
+//                             after BOS up,   two green candles -> BUY.
+// Both candles must come AFTER the BOS candle. A 3rd same-colour candle in a row is skipped.
+// SL = slPrice in PRICE units (gold: 2 = $2 per ounce; EURUSD: use 0.002). TP = rr x SL.
+
+const params = {
+  mode: ['counter', 'with'],
+  swingN: [3, 5],        // candles each side that define a swing
+  slPrice: [2],          // stop distance in price units
+  rr: [2]                // 2 = TP is twice the stop (your $2 SL / $4 TP)
+};
+
+const config = { warmup: 60 };
+
+function prepare(d, ind, p) {
+  const n = p.swingN, N = d.close.length;
+  const sw = ind.swings(d, n);
+  const state = new Array(N).fill(0), bos = new Array(N).fill(-1);
+  let sh = null, sl = null, cur = 0, curBos = -1;
+  for (let j = 0; j < N; j++) {
+    const m = j - n;                         // a swing at m is only KNOWN n candles later
+    if (m >= 0) {
+      if (sw.high[m]) sh = d.high[m];
+      if (sw.low[m])  sl = d.low[m];
+    }
+    if (sl !== null && d.close[j] < sl)      { cur = -1; curBos = j; sl = null; }
+    else if (sh !== null && d.close[j] > sh) { cur =  1; curBos = j; sh = null; }
+    state[j] = cur; bos[j] = curBos;
+  }
+  return { state: state, bos: bos };
+}
+
+function onBar(i, d, x, ctx) {
+  const p = ctx.p, st = x.state[i];
+  if (st === 0 || x.bos[i] >= i - 1) return null;       // both candles must be after the BOS
+
+  const green = k => d.close[k] > d.open[k];
+  const red   = k => d.close[k] < d.open[k];
+
+  let side = null;
+  if (p.mode === 'counter') {
+    if (st === -1 && green(i) && green(i-1)) side = 'buy';
+    if (st ===  1 && red(i)   && red(i-1))   side = 'sell';
+  } else {
+    if (st === -1 && red(i)   && red(i-1))   side = 'sell';
+    if (st ===  1 && green(i) && green(i-1)) side = 'buy';
+  }
+  if (!side) return null;
+
+  // skip the 3rd (or later) candle of the same colour in a row
+  if (i - 2 > x.bos[i] && (side === 'buy' ? green(i-2) : red(i-2))) return null;
+
+  const buy = side === 'buy';
+  return { side: side, sl: buy ? d.close[i] - p.slPrice : d.close[i] + p.slPrice, rr: p.rr };
+}
+`},
 donchian: {name:'Donchian breakout + trend', code:`// ===== Donchian breakout in the direction of the trend =====
 const params = { n: [20, 55], slATR: [1.5, 2], rr: [2, 3] };
 
@@ -555,6 +773,14 @@ const lsGet=(k,f)=>{try{const v=localStorage.getItem(k);return v===null?f:JSON.p
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 const m$=v=>(v>=0?'+':'-')+'$'+Math.abs(v).toFixed(2);
 const f1=v=>Number(v).toFixed(1);
+// repairs common paste damage: markdown fences, curly quotes, non-breaking spaces, HTML entities
+function cleanCode(s){
+  return String(s).split('\n').filter(l=>!/^\s*```/.test(l)).join('\n')
+    .replace(/[\u201C\u201D]/g,'"').replace(/[\u2018\u2019]/g,"'")
+    .replace(/[\u00A0\u2007\u202F]/g,' ').replace(/[\u200B-\u200D\uFEFF]/g,'')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+}
+
 const fmtT=ms=>new Date(ms).toISOString().slice(0,16).replace('T',' ');
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>e.style.display='none',2600);}
 function pxFmt(v){const a=Math.abs(v);return a>=500?v.toFixed(2):a>=50?v.toFixed(3):v.toFixed(5);}
@@ -698,7 +924,7 @@ $('#run').addEventListener('click',async()=>{
     b.innerHTML='<span class="spin"></span>Running...';
     await sleep(30);
     const s={lots:ST.lots,spread:ST.spread,contract:ST.contract,quoteUSD:ST.quoteUSD==='1',maxTradesDay:ST.maxDay,dailyLoss:ST.dailyLoss,maxRisk:ST.maxRisk,isFrac:ST.isPct/100,balance:ST.balance,riskPct:ST.riskPct};
-    const out=await runWorker($('#code').value,CDL,s);
+    const out=await runWorker(cleanCode($('#code').value),CDL,s);
     RES=out;SEL=0;renderResults();showTab('res');
     $('#heroSub').textContent=ST.sym+' '+ST.tf.replace('min','m').replace('1day','1D')+' | '+CDL.t.length.toLocaleString()+' candles | '+out.results.length+(out.results.length>1?' combinations':' run');
   }catch(e){
