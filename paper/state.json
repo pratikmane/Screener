@@ -398,13 +398,15 @@
    "tp": 1.12191
   },
   {
+   "close_time": "2026-11-06 18:30:00",
    "entry": 4060.59035,
    "id": "XAUUSD-202611061800",
    "open_time": "2026-11-06 18:15:00",
+   "pnl": 4.0,
    "side": "BUY",
    "signal_time": "2026-11-06 18:00:00",
    "sl": 4058.59035,
-   "status": "OPEN",
+   "status": "TP",
    "structure": "down",
    "symbol": "XAUUSD",
    "tp": 4064.59035
